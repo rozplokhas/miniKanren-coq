@@ -1,86 +1,64 @@
 Require Import List.
 Require Import Coq.Lists.ListSet.
 Import ListNotations.
+Require Import Omega.
+
 Require Import Stream.
 Require Import Unify.
 Require Import MiniKanrenSyntax.
-Require Import OperationalSem.
 Require Import DenotationalSem.
-Require Import Omega.
+Require Import OperationalSem.
 
-Definition in_denotational_sem_subst (s : subst) (f : repr_fun) : Prop :=
-  exists (f' : repr_fun), repr_fun_eq (subst_repr_fun_compose s f') f.
+Inductive in_denotational_sem_nt_state : nt_state -> repr_fun -> Prop :=
+| dsnstLeaf : forall g s n f (DSG  : [| g , f |])
+                             (DSS  : [ s , f ]),
+                             in_denotational_sem_nt_state (Leaf g s n) f
+| dsnstSumL : forall nst1 nst2 f (DSST' : in_denotational_sem_nt_state nst1 f),
+                                 in_denotational_sem_nt_state (Sum nst1 nst2) f
+| dsnstSumR : forall nst1 nst2 f (DSST' : in_denotational_sem_nt_state nst2 f),
+                                 in_denotational_sem_nt_state (Sum nst1 nst2) f
+| dsnstProd : forall nst g f (DSG : [| g , f |])
+                             (DSST' : in_denotational_sem_nt_state nst f),
+                             in_denotational_sem_nt_state (Prod nst g) f.
 
-Definition in_denotational_analog (t : trace) (f : repr_fun) : Prop :=
-  exists (s : subst) (n : nat), in_stream (Answer s n) t /\ in_denotational_sem_subst s f.
-
-Notation "{| t , f |}" := (in_denotational_analog t f).
-
-Inductive in_denotational_sem_state' : state' -> repr_fun -> Prop :=
-| dsst'Leaf : forall g s n f (DSG : [| g , f |])
-                             (DSS : in_denotational_sem_subst s f),
-                             in_denotational_sem_state' (Leaf g s n) f
-| dsst'SumL : forall st1' st2' f (DSST' : in_denotational_sem_state' st1' f),
-                                 in_denotational_sem_state' (Sum st1' st2') f
-| dsst'SumR : forall st1' st2' f (DSST' : in_denotational_sem_state' st2' f),
-                                 in_denotational_sem_state' (Sum st1' st2') f
-| dsst'Prod : forall st' g f (DSG : [| g , f |])
-                             (DSST' : in_denotational_sem_state' st' f),
-                             in_denotational_sem_state' (Prod st' g) f.
-
-Hint Constructors in_denotational_sem_state'.
+Hint Constructors in_denotational_sem_nt_state : core.
 
 Inductive in_denotational_sem_state : state -> repr_fun -> Prop :=
-| dsstState : forall st' f (DSST' : in_denotational_sem_state' st' f),
-                           in_denotational_sem_state (State st') f.
+| dsstNTState : forall nst f (DSST' : in_denotational_sem_nt_state nst f),
+                           in_denotational_sem_state (NTState nst) f.
 
-Hint Constructors in_denotational_sem_state.
+Hint Constructors in_denotational_sem_state : core.
 
 
 Lemma answer_correct
       (s : subst)
       (n : nat)
       (f : repr_fun)
-      (DSS : in_denotational_sem_subst s f)
-      (st' : state')
+      (DSS : [ s , f ])
+      (st' : nt_state)
       (st : state)
       (EV : eval_step st' (Answer s n) st) :
-      in_denotational_sem_state' st' f.
+      in_denotational_sem_nt_state st' f.
 Proof.
   remember (Answer s n) as l.
-  induction EV; good_inversion Heql.
-  1, 3-4: auto.
-  destruct DSS as [f' ff'_con].
-  constructor.
-  { constructor. red.
-    specialize (repr_fun_eq_apply _ _ t1 ff'_con). intro. rewrite <- H.
-    specialize (repr_fun_eq_apply _ _ t2 ff'_con). intro. rewrite <- H0.
-    rewrite repr_fun_apply_compose. rewrite repr_fun_apply_compose.
-    rewrite compose_correctness. rewrite compose_correctness.
-    apply mgu_unifies in MGU. rewrite MGU. reflexivity. }
-  { red. exists (subst_repr_fun_compose s' f').
-    red. intros. red.
-    red in ff'_con. specialize (ff'_con x). red in ff'_con.
-    rewrite <- ff'_con. unfold subst_repr_fun_compose.
-    replace (fun x0 : name => apply_repr_fun f' (apply_subst s' (Var x0)))
-      with (subst_repr_fun_compose s' f').
-    2: reflexivity.
-    rewrite repr_fun_apply_compose. rewrite compose_correctness.
-    reflexivity. }
+  induction EV; good_inversion Heql; auto.
+  { assert (DSS_copy := DSS). apply (denotational_sem_uni _ _ _ _ MGU _) in DSS.
+    destruct DSS as [DSS EQ]. constructor; auto. }
 Qed.
 
 Lemma next_state_correct
       (f : repr_fun)
       (st : state)
       (DSS : in_denotational_sem_state st f)
-      (st' : state')
-      (WF : well_formed_state' st')
+      (st' : nt_state)
+      (WF : well_formed_nt_state st')
       (h : label)
       (EV : eval_step st' h st) :
-      in_denotational_sem_state' st' f.
+      in_denotational_sem_nt_state st' f.
 Proof.
   induction EV; good_inversion DSS.
-  { good_inversion DSST'; good_inversion DSST'0; constructor; auto. }
+  { good_inversion DSST'; good_inversion DSST'0;
+    constructor; auto. }
   { good_inversion DSST'. good_inversion DSST'0. auto. }
   { good_inversion WF. good_inversion DSST'.
     constructor; auto. econstructor; eauto.
@@ -94,7 +72,8 @@ Proof.
     eapply answer_correct; eauto. }
   { good_inversion WF. good_inversion DSST'. auto. }
   { good_inversion WF. good_inversion DSST'.
-    { good_inversion DSST'0. constructor; auto.
+    { good_inversion DSST'0.
+      constructor; auto.
       eapply answer_correct; eauto. }
     { good_inversion DSST'0. auto. } }
 Qed.
@@ -122,38 +101,19 @@ Proof.
     constructor. eapply next_state_correct; eauto. }
 Qed.
 
-Fixpoint first_nats (k : nat) : list nat :=
-  match k with
-  | 0   => []
-  | S n => n :: first_nats n
-  end.
-
-Lemma first_nats_less
-      (n k : nat)
-      (H : In n (first_nats k)) :
-      n < k.
-Proof.
-  induction k.
-  { inversion H. }
-  { inversion H. { omega. } { apply IHk in H0. omega. } }
-Qed.
-
 Lemma search_correctness
       (g   : goal)
       (k   : nat)
       (HC  : closed_goal_in_context (first_nats k) g)
       (f   : repr_fun)
       (t   : trace)
-      (HOP : op_sem (State (Leaf g empty_subst k)) t)
+      (HOP : op_sem (NTState (Leaf g empty_subst k)) t)
       (HDA : {| t , f |}) :
       [| g , f |].
 Proof.
-  remember (State (Leaf g empty_subst k)) as st.
+  remember (NTState (Leaf g empty_subst k)) as st.
   assert (in_denotational_sem_state st f).
   { eapply search_correctness_generalized; eauto.
-    subst. constructor. constructor.
-    { intros. good_inversion X_IN_DOM. good_inversion H. }
-    { intros. good_inversion X_IN_VRAN. destruct H as [t0 [H0 _]]. good_inversion H0. }
-    { intros. apply HC in X_FV. apply first_nats_less. auto. } }
+    subst. constructor. apply well_formed_initial_state; auto. }
   subst. inversion H. inversion DSST'. auto.
 Qed.
